@@ -352,8 +352,31 @@ class AbletonMCP(ControlSurface):
                     "name": "Master",
                     "volume": self._song.master_track.mixer_device.volume.value,
                     "panning": self._song.master_track.mixer_device.panning.value
-                }
+                },
+                # Transport / playback state — lets clients render a live
+                # playhead without polling separately. All values are best-
+                # effort: wrapped in try/except so older Live versions or
+                # unusual session states never break the existing response
+                # shape.
+                "is_playing": False,
+                "current_song_time": 0.0,
+                "song_length": 0.0,
+                "loop": False,
+                "loop_start": 0.0,
+                "loop_length": 0.0,
             }
+            try: result["is_playing"] = bool(self._song.is_playing)
+            except Exception: pass
+            try: result["current_song_time"] = float(self._song.current_song_time)
+            except Exception: pass
+            try: result["song_length"] = float(self._song.song_length)
+            except Exception: pass
+            try: result["loop"] = bool(self._song.loop)
+            except Exception: pass
+            try: result["loop_start"] = float(self._song.loop_start)
+            except Exception: pass
+            try: result["loop_length"] = float(self._song.loop_length)
+            except Exception: pass
             return result
         except Exception as e:
             self.log_message("Error getting session info: " + str(e))
