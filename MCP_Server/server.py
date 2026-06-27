@@ -1248,6 +1248,63 @@ def get_locators(ctx: Context, user_prompt: str = "") -> str:
         return f"Error getting locators: {str(e)}"
 
 @mcp.tool()
+@rich_telemetry_tool("set_locator")
+def set_locator(ctx: Context, time: float, name: str, user_prompt: str = "") -> str:
+    """
+    Create (or rename, if one already exists at that time) an arrangement
+    locator/marker at a beat position.
+
+    Parameters:
+    - time: Beat position in the arrangement (beats from the start)
+    - name: Name for the marker, e.g. "Drop", "Intro", "Break"
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_locator", {"time": time, "name": name})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error setting locator: {str(e)}")
+        return f"Error setting locator: {str(e)}"
+
+@mcp.tool()
+@rich_telemetry_tool("create_section_markers")
+def create_section_markers(
+    ctx: Context,
+    sections: List[Dict[str, Union[str, int]]],
+    user_prompt: str = ""
+) -> str:
+    """
+    Create a set of arrangement locators from a song structure, given in bars.
+
+    Converts each section's bar number to a beat position using the project's
+    time signature, then places a named locator there via set_locator.
+
+    Parameters:
+    - sections: List of {"name": str, "bar": int} dicts, e.g.
+      [{"name": "intro", "bar": 1}, {"name": "drop", "bar": 17}].
+      Bar 1 is the start of the arrangement (beat 0).
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        session_info = ableton.send_command("get_session_info")
+        beats_per_bar = session_info.get("signature_numerator", 4)
+
+        created = []
+        for section in sections:
+            name = section["name"]
+            bar = section["bar"]
+            time = (bar - 1) * beats_per_bar
+            result = ableton.send_command("set_locator", {"time": time, "name": name})
+            created.append({"name": result.get("name", name), "time": result.get("time", time)})
+
+        return json.dumps({"markers_created": len(created), "markers": created}, indent=2)
+    except Exception as e:
+        logger.error(f"Error creating section markers: {str(e)}")
+        return f"Error creating section markers: {str(e)}"
+
+@mcp.tool()
 @telemetry_tool("get_track_hierarchy")
 def get_track_hierarchy(ctx: Context, user_prompt: str = "") -> str:
     """
