@@ -245,7 +245,7 @@ class AbletonMCP(ControlSurface):
                                  # Arrangement view – must run on the main thread
                                  "switch_to_arrangement_view", "set_current_song_time",
                                  "duplicate_session_clip_to_arrangement", "create_arrangement_midi_clip",
-                                 "set_track_color"]:
+                                 "set_track_color", "set_locator"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -350,6 +350,10 @@ class AbletonMCP(ControlSurface):
                             track_index = params.get("track_index", 0)
                             color = params.get("color")
                             result = self._set_track_color(track_index, color)
+                        elif command_type == "set_locator":
+                            time_val = params.get("time", 0.0)
+                            name = params.get("name", "")
+                            result = self._set_locator(time_val, name)
 
                         # Put the result in the queue
                         response_queue.put({"status": "success", "result": result})
@@ -1255,6 +1259,53 @@ class AbletonMCP(ControlSurface):
             return result
         except Exception as e:
             self.log_message("Error getting selection: " + str(e))
+            raise
+
+    def _set_locator(self, time, name):
+        """Create (or rename) an arrangement locator/cue point at a given beat time.
+
+        Live's API only exposes Song.set_or_delete_cue(), which toggles a cue
+        at the *current* song time: creates one if none exists there, deletes
+        the existing one otherwise. To place a cue at an arbitrary time we:
+          1. Check if a cue already exists at `time` (tolerance for float compare).
+          2. If not, temporarily move the playhead there and call set_or_delete_cue().
+          3. Find the cue at that time and rename it.
+          4. Restore the original playhead position.
+        """
+        try:
+            tolerance = 1e-6
+            existing = None
+            for cue_point in self._song.cue_points:
+                if abs(cue_point.time - time) < tolerance:
+                    existing = cue_point
+                    break
+
+            previous_time = self._song.current_song_time
+
+            try:
+                if existing is None:
+                    self._song.current_song_time = float(time)
+                    self._song.set_or_delete_cue()
+
+                    for cue_point in self._song.cue_points:
+                        if abs(cue_point.time - time) < tolerance:
+                            existing = cue_point
+                            break
+
+                    if existing is None:
+                        raise Exception("Failed to create cue point at time " + str(time))
+            finally:
+                self._song.current_song_time = previous_time
+
+            if name:
+                existing.name = name
+
+            return {
+                "name": existing.name,
+                "time": existing.time
+            }
+        except Exception as e:
+            self.log_message("Error setting locator: " + str(e))
             raise
 
     def _set_track_color(self, track_index, color):
