@@ -1,4 +1,4 @@
-# ableton_mcp_server.py
+# ableton_copilot_server.py
 from mcp.server.fastmcp import FastMCP, Context
 import socket
 import json
@@ -1364,6 +1364,127 @@ def set_track_color(ctx: Context, track_index: int, color: int, user_prompt: str
     except Exception as e:
         logger.error(f"Error setting track color: {str(e)}")
         return f"Error setting track color: {str(e)}"
+
+
+# ── Mixing ───────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+@rich_telemetry_tool("set_track_volume")
+def set_track_volume(ctx: Context, track_index: int, volume: float, user_prompt: str = "") -> str:
+    """
+    Set a track's mixer volume.
+
+    Parameters:
+    - track_index: The index of the track
+    - volume: Linear volume, 0.0 to 1.0 (Live's mixer curve — ~0.85 is unity/0dB)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_volume", {
+            "track_index": track_index,
+            "volume": volume
+        })
+        return f"Set volume of track '{result.get('track_name', track_index)}' to {result.get('volume', volume)}"
+    except Exception as e:
+        logger.error(f"Error setting track volume: {str(e)}")
+        return f"Error setting track volume: {str(e)}"
+
+
+@mcp.tool()
+@rich_telemetry_tool("set_track_pan")
+def set_track_pan(ctx: Context, track_index: int, pan: float, user_prompt: str = "") -> str:
+    """
+    Set a track's mixer pan.
+
+    Parameters:
+    - track_index: The index of the track
+    - pan: -1.0 (full left) to 1.0 (full right), 0.0 is center
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_pan", {
+            "track_index": track_index,
+            "pan": pan
+        })
+        return f"Set pan of track '{result.get('track_name', track_index)}' to {result.get('pan', pan)}"
+    except Exception as e:
+        logger.error(f"Error setting track pan: {str(e)}")
+        return f"Error setting track pan: {str(e)}"
+
+
+@mcp.tool()
+@rich_telemetry_tool("set_track_mute")
+def set_track_mute(ctx: Context, track_index: int, muted: bool = True, user_prompt: str = "") -> str:
+    """
+    Mute or unmute a track.
+
+    Parameters:
+    - track_index: The index of the track
+    - muted: True to mute, False to unmute (default: True)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_mute", {
+            "track_index": track_index,
+            "muted": muted
+        })
+        state = "Muted" if result.get("muted", muted) else "Unmuted"
+        return f"{state} track '{result.get('track_name', track_index)}'"
+    except Exception as e:
+        logger.error(f"Error setting track mute: {str(e)}")
+        return f"Error setting track mute: {str(e)}"
+
+
+@mcp.tool()
+@rich_telemetry_tool("set_track_solo")
+def set_track_solo(ctx: Context, track_index: int, soloed: bool = True, user_prompt: str = "") -> str:
+    """
+    Solo or unsolo a track.
+
+    Parameters:
+    - track_index: The index of the track
+    - soloed: True to solo, False to unsolo (default: True)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_solo", {
+            "track_index": track_index,
+            "soloed": soloed
+        })
+        state = "Soloed" if result.get("soloed", soloed) else "Unsoloed"
+        return f"{state} track '{result.get('track_name', track_index)}'"
+    except Exception as e:
+        logger.error(f"Error setting track solo: {str(e)}")
+        return f"Error setting track solo: {str(e)}"
+
+
+@mcp.tool()
+@rich_telemetry_tool("set_send_level")
+def set_send_level(ctx: Context, track_index: int, send_index: int, value: float, user_prompt: str = "") -> str:
+    """
+    Set a track's send level to a return track.
+
+    Parameters:
+    - track_index: The index of the track
+    - send_index: The index of the send (matches the return track's index)
+    - value: Linear send level, 0.0 to 1.0
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_send_level", {
+            "track_index": track_index,
+            "send_index": send_index,
+            "value": value
+        })
+        return f"Set send {send_index} on track '{result.get('track_name', track_index)}' to {result.get('value', value)}"
+    except Exception as e:
+        logger.error(f"Error setting send level: {str(e)}")
+        return f"Error setting send level: {str(e)}"
 
 
 # ── Composition generators (M3) ─────────────────────────────────────────────
