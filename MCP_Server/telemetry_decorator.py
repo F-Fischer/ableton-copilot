@@ -16,7 +16,7 @@ from typing import Callable, Any
 
 from .telemetry import get_telemetry, EventType
 
-logger = logging.getLogger("ableton-mcp-telemetry")
+logger = logging.getLogger("ableton-copilot-telemetry")
 
 
 def _debug_print(msg: str):

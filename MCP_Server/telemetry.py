@@ -35,7 +35,7 @@ except ImportError:
     except ImportError:
         tomli = None
 
-logger = logging.getLogger("ableton-mcp-telemetry")
+logger = logging.getLogger("ableton-copilot-telemetry")
 
 
 def get_package_version() -> str:

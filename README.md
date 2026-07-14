@@ -1,18 +1,17 @@
-# AbletonMCP - Ableton Live Model Context Protocol Integration
-[![smithery badge](https://smithery.ai/badge/@ahujasid/ableton-mcp)](https://smithery.ai/server/@ahujasid/ableton-mcp)
+# Ableton Copilot - an AI music-production copilot for Ableton Live
 
-AbletonMCP connects Ableton Live to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Ableton Live. This integration enables prompt-assisted music production, end-to-end track creation, and Live session and arrangement manipulation.
+Ableton Copilot connects Ableton Live to Claude AI through the Model Context Protocol (MCP), giving Claude a music-theory-aware toolset to compose, arrange, mix, and sound-design inside a real Live session — not just a remote control, but a copilot that understands key, genre, and song structure.
 
-### Join the Community
-
-Give feedback, get inspired, and build on top of the MCP: [Discord](https://discord.gg/3ZrMyGKnaU). Made by [Siddharth](https://x.com/sidahuj)
+Built on top of the open-source Ableton Live Remote Script and socket protocol originally created by [Siddharth Ahuja](https://x.com/sidahuj) ([ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp)) — that project handles the low-level Live Object Model plumbing; everything above it (music theory, generators, mixing, telemetry, session state) is this project's own layer.
 
 ## Features
 
 - **Two-way communication**: Connect Claude AI to Ableton Live through a socket-based server
 - **Track manipulation**: Create, modify, and manipulate MIDI and audio tracks
+- **Mixing control**: Set track volume, pan, mute, solo, and send levels
 - **Instrument and effect selection**: Claude can access and load the right instruments, effects and sounds from Ableton's library
 - **Clip creation**: Create and edit MIDI clips with notes
+- **Music-theory-aware generation**: Key- and genre-aware chord, bassline, and drum pattern generators, plus one-call section scaffolding
 - **Arrangement view composition**: Build full songs autonomously in Arrangement View, including sections like intro, buildup, drop, breakdown, and outro
 - **Session control**: Start and stop playback, fire clips, and control transport across Session View and Arrangement View
 - **Anonymous telemetry**: Usage tracking to help improve the tool (can be disabled)
@@ -21,18 +20,10 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 The system consists of two main components:
 
-1. **Ableton Remote Script** (`Ableton_Remote_Script/__init__.py`): A MIDI Remote Script for Ableton Live that creates a socket server to receive and execute commands
-2. **MCP Server** (`server.py`): A Python server that implements the Model Context Protocol and connects to the Ableton Remote Script
+1. **Ableton Remote Script** (`AbletonMCP_Remote_Script/__init__.py`): A MIDI Remote Script for Ableton Live that creates a socket server to receive and execute commands
+2. **MCP Server** (`MCP_Server/server.py`): A Python server that implements the Model Context Protocol and connects to the Ableton Remote Script
 
 ## Installation
-
-### Installing via Smithery
-
-To install Ableton Live Integration for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@ahujasid/ableton-mcp):
-
-```bash
-npx -y @smithery/cli install @ahujasid/ableton-mcp --client claude
-```
 
 ### Prerequisites
 
@@ -58,10 +49,10 @@ Otherwise, install from [uv's official website][https://docs.astral.sh/uv/gettin
 ```json
 {
     "mcpServers": {
-        "AbletonMCP": {
+        "AbletonCopilot": {
             "command": "uvx",
             "args": [
-                "ableton-mcp"
+                "ableton-copilot"
             ]
         }
     }
@@ -70,10 +61,10 @@ Otherwise, install from [uv's official website][https://docs.astral.sh/uv/gettin
 
 ### Cursor Integration
 
-Run ableton-mcp without installing it permanently through uvx. Go to Cursor Settings > MCP and paste this as a command:
+Run ableton-copilot without installing it permanently through uvx. Go to Cursor Settings > MCP and paste this as a command:
 
 ```
-uvx ableton-mcp
+uvx ableton-copilot
 ```
 
 ⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both
@@ -127,6 +118,9 @@ Once the config file has been set on Claude, and the remote script is running in
 
 - Get session and track information
 - Create and modify MIDI and audio tracks
+- Set track volume, pan, mute, solo, and send levels
+- Generate key- and genre-aware chord progressions, basslines, and drum patterns
+- Scaffold an entire section (key, chords, bass, drums) in one call
 - Create full song arrangements from start to finish in Arrangement View
 - Create, edit, and trigger clips
 - Control playback
@@ -178,7 +172,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Telemetry
 
-AbletonMCP collects anonymous usage data to help improve the tool. This includes:
+Ableton Copilot collects anonymous usage data to help improve the tool. This includes:
 - Tool usage statistics (which features are used)
 - Session information (for daily/monthly active user counts)
 - Error rates and performance metrics
@@ -202,9 +196,9 @@ For Claude Desktop, add the environment variable to your config:
 ```json
 {
     "mcpServers": {
-        "AbletonMCP": {
+        "AbletonCopilot": {
             "command": "uvx",
-            "args": ["ableton-mcp"],
+            "args": ["ableton-copilot"],
             "env": {
                 "ABLETON_MCP_DISABLE_TELEMETRY": "true"
             }
