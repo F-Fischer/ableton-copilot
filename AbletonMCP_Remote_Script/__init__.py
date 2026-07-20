@@ -544,7 +544,7 @@ class AbletonMCP(ControlSurface):
                 "is_midi_track": track.has_midi_input,
                 "mute": track.mute,
                 "solo": track.solo,
-                "arm": track.arm,
+                "arm": (track.arm if not getattr(track, "is_foldable", False) else None),
                 "volume": track.mixer_device.volume.value,
                 "panning": track.mixer_device.panning.value,
                 "color": getattr(track, "color", None),
