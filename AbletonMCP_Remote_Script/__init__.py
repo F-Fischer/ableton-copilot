@@ -236,7 +236,7 @@ class AbletonMCP(ControlSurface):
                 clip_index = params.get("clip_index", 0)
                 response["result"] = self._get_clip_notes(track_index, clip_index)
             # Commands that modify Live's state should be scheduled on the main thread
-            elif command_type in ["create_midi_track", "set_track_name",
+            elif command_type in ["create_midi_track", "create_audio_track", "set_track_name",
                                  "create_clip", "create_audio_clip", "add_notes_to_clip", "set_clip_name",
                                  "set_tempo", "fire_clip", "stop_clip",
                                  "start_playback", "stop_playback", "load_browser_item",
@@ -244,6 +244,7 @@ class AbletonMCP(ControlSurface):
                                  "delete_track", "delete_clip", "delete_device",
                                  # Arrangement view – must run on the main thread
                                  "switch_to_arrangement_view", "set_current_song_time",
+                                 "set_loop_region", "enable_arrangement_loop",
                                  "duplicate_session_clip_to_arrangement", "create_arrangement_midi_clip",
                                  "set_track_color", "set_locator", "add_notes_to_arrangement_clip",
                                  # Mixing commands
@@ -259,6 +260,9 @@ class AbletonMCP(ControlSurface):
                         if command_type == "create_midi_track":
                             index = params.get("index", -1)
                             result = self._create_midi_track(index)
+                        elif command_type == "create_audio_track":
+                            index = params.get("index", -1)
+                            result = self._create_audio_track(index)
                         elif command_type == "set_track_name":
                             track_index = params.get("track_index", 0)
                             name = params.get("name", "")
@@ -337,6 +341,13 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "set_current_song_time":
                             time_val = params.get("time", 0.0)
                             result = self._set_current_song_time(time_val)
+                        elif command_type == "set_loop_region":
+                            start = params.get("start", 0.0)
+                            length = params.get("length", 4.0)
+                            result = self._set_loop_region(start, length)
+                        elif command_type == "enable_arrangement_loop":
+                            enabled = params.get("enabled", True)
+                            result = self._enable_arrangement_loop(enabled)
                         elif command_type == "duplicate_session_clip_to_arrangement":
                             track_index = params.get("track_index", 0)
                             clip_index = params.get("clip_index", 0)
@@ -434,6 +445,11 @@ class AbletonMCP(ControlSurface):
             elif command_type == "get_browser_items_at_path":
                 path = params.get("path", "")
                 response["result"] = self.get_browser_items_at_path(path)
+            elif command_type == "search_browser_items":
+                query = params.get("query", "")
+                category_type = params.get("category_type", "all")
+                max_results = params.get("max_results", 25)
+                response["result"] = self.search_browser_items(query, category_type, max_results)
             # Read-only arrangement command – no main-thread scheduling required
             elif command_type == "get_arrangement_clips":
                 track_index = params.get("track_index", 0)
@@ -751,6 +767,25 @@ class AbletonMCP(ControlSurface):
             return result
         except Exception as e:
             self.log_message("Error creating MIDI track: " + str(e))
+            raise
+
+    def _create_audio_track(self, index):
+        """Create a new audio track at the specified index"""
+        try:
+            # Create the track
+            self._song.create_audio_track(index)
+
+            # Get the new track
+            new_track_index = len(self._song.tracks) - 1 if index == -1 else index
+            new_track = self._song.tracks[new_track_index]
+
+            result = {
+                "index": new_track_index,
+                "name": new_track.name
+            }
+            return result
+        except Exception as e:
+            self.log_message("Error creating audio track: " + str(e))
             raise
     
     
@@ -1072,6 +1107,37 @@ class AbletonMCP(ControlSurface):
             return {"current_song_time": self._song.current_song_time}
         except Exception as e:
             self.log_message("Error setting current song time: " + str(e))
+            raise
+
+    def _set_loop_region(self, start, length):
+        """Set the arrangement loop region (start and length, in beats)"""
+        try:
+            start = float(start)
+            length = float(length)
+
+            if start < 0:
+                raise ValueError("start must be >= 0")
+            if length <= 0:
+                raise ValueError("length must be > 0")
+
+            self._song.loop_start = start
+            self._song.loop_length = length
+
+            return {
+                "loop_start": self._song.loop_start,
+                "loop_length": self._song.loop_length
+            }
+        except Exception as e:
+            self.log_message("Error setting loop region: " + str(e))
+            raise
+
+    def _enable_arrangement_loop(self, enabled):
+        """Enable or disable the arrangement loop"""
+        try:
+            self._song.loop = bool(enabled)
+            return {"loop": self._song.loop}
+        except Exception as e:
+            self.log_message("Error setting arrangement loop: " + str(e))
             raise
 
     def _get_arrangement_clips(self, track_index):
@@ -2018,8 +2084,116 @@ class AbletonMCP(ControlSurface):
             
             self.log_message("Retrieved {0} items at path: {1}".format(len(items), path))
             return result
-            
+
         except Exception as e:
             self.log_message("Error getting browser items at path: {0}".format(str(e)))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def search_browser_items(self, query, category_type="all", max_results=25):
+        """
+        Recursively search the Ableton browser for items whose name contains `query`.
+
+        Args:
+            query: Case-insensitive substring to match against item names
+            category_type: A specific browser category (e.g. 'instruments'), or 'all'
+            max_results: Maximum number of matches to return
+
+        Returns:
+            Dictionary with matching items (name/uri/path/is_folder/is_device/is_loadable)
+        """
+        try:
+            app = self.application()
+            if not app:
+                raise RuntimeError("Could not access Live application")
+
+            if not hasattr(app, 'browser') or app.browser is None:
+                raise RuntimeError("Browser is not available in the Live application")
+
+            if not query:
+                raise ValueError("query is required")
+
+            browser_attrs = [attr for attr in dir(app.browser) if not attr.startswith('_')]
+
+            roots = []
+            if category_type == "all":
+                for attr in browser_attrs:
+                    try:
+                        item = getattr(app.browser, attr)
+                        if hasattr(item, 'children') or hasattr(item, 'name'):
+                            roots.append(item)
+                    except Exception as e:
+                        self.log_message("Error accessing browser attribute {0}: {1}".format(attr, str(e)))
+            else:
+                found = False
+                for attr in browser_attrs:
+                    if attr.lower() == category_type.lower():
+                        try:
+                            roots.append(getattr(app.browser, attr))
+                            found = True
+                        except Exception as e:
+                            self.log_message("Error accessing browser attribute {0}: {1}".format(attr, str(e)))
+                        break
+                if not found:
+                    return {
+                        "query": query,
+                        "category_type": category_type,
+                        "error": "Unknown or unavailable category: {0}".format(category_type),
+                        "available_categories": browser_attrs,
+                        "matches": []
+                    }
+
+            query_lower = query.lower()
+            matches = []
+            # Two independent caps: stop once we have enough matches, and stop after
+            # visiting too many nodes even if nothing matched (Ableton's factory library
+            # is large enough that an unbounded walk could take a very long time).
+            max_nodes = 4000
+            visit_state = {"nodes_visited": 0, "cap_hit": False}
+
+            def walk(item, path_parts):
+                if len(matches) >= max_results or visit_state["cap_hit"]:
+                    return
+
+                visit_state["nodes_visited"] += 1
+                if visit_state["nodes_visited"] > max_nodes:
+                    visit_state["cap_hit"] = True
+                    return
+
+                name = item.name if hasattr(item, 'name') else "Unknown"
+                current_path = path_parts + [name]
+
+                if query_lower in name.lower():
+                    matches.append({
+                        "name": name,
+                        "path": "/".join(current_path),
+                        "uri": item.uri if hasattr(item, 'uri') else None,
+                        "is_folder": hasattr(item, 'children') and bool(item.children),
+                        "is_device": hasattr(item, 'is_device') and item.is_device,
+                        "is_loadable": hasattr(item, 'is_loadable') and item.is_loadable
+                    })
+
+                if hasattr(item, 'children'):
+                    for child in item.children:
+                        if len(matches) >= max_results or visit_state["cap_hit"]:
+                            return
+                        walk(child, current_path)
+
+            for root_item in roots:
+                if len(matches) >= max_results or visit_state["cap_hit"]:
+                    break
+                walk(root_item, [])
+
+            self.log_message("search_browser_items('{0}') found {1} matches ({2} nodes visited)".format(
+                query, len(matches), visit_state["nodes_visited"]))
+
+            return {
+                "query": query,
+                "category_type": category_type,
+                "matches": matches,
+                "truncated": visit_state["cap_hit"] or len(matches) >= max_results
+            }
+        except Exception as e:
+            self.log_message("Error searching browser items: " + str(e))
             self.log_message(traceback.format_exc())
             raise

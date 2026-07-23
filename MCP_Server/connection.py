@@ -107,6 +107,7 @@ class AbletonConnection:
             "delete_track", "delete_clip", "delete_device",
             "start_playback", "stop_playback", "load_instrument_or_effect",
             "switch_to_arrangement_view", "set_current_song_time",
+            "set_loop_region", "enable_arrangement_loop",
             "duplicate_session_clip_to_arrangement"
         ]
 

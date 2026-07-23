@@ -108,6 +108,24 @@ def create_midi_track(ctx: Context, index: int = -1, user_prompt: str = "") -> s
         logger.error(f"Error creating MIDI track: {str(e)}")
         return f"Error creating MIDI track: {str(e)}"
 
+@mcp.tool()
+@telemetry_tool("create_audio_track")
+def create_audio_track(ctx: Context, index: int = -1, user_prompt: str = "") -> str:
+    """
+    Create a new audio track in the Ableton session.
+
+    Parameters:
+    - index: The index to insert the track at (-1 = end of list)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("create_audio_track", {"index": index})
+        return f"Created new audio track: {result.get('name', 'unknown')}"
+    except Exception as e:
+        logger.error(f"Error creating audio track: {str(e)}")
+        return f"Error creating audio track: {str(e)}"
+
 
 @mcp.tool()
 @telemetry_tool("delete_track")
@@ -775,6 +793,56 @@ def get_browser_items_at_path(ctx: Context, path: str, user_prompt: str = "") ->
             return f"Error getting browser items at path: {error_msg}"
 
 @mcp.tool()
+@rich_telemetry_tool("search_browser_items")
+def search_browser_items(
+    ctx: Context,
+    query: str,
+    category_type: str = "all",
+    max_results: int = 25,
+    user_prompt: str = "",
+) -> str:
+    """
+    Search the Ableton browser for items whose name contains a query string.
+
+    Parameters:
+    - query: Case-insensitive substring to match against instrument/effect/preset names
+    - category_type: A specific browser category ('instruments', 'sounds', 'drums',
+      'audio_effects', 'midi_effects', or any other category from get_browser_tree), or
+      'all' to search every category
+    - max_results: Maximum number of matches to return (default 25)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("search_browser_items", {
+            "query": query,
+            "category_type": category_type,
+            "max_results": max_results
+        })
+
+        if "error" in result and "available_categories" in result:
+            error = result.get("error", "")
+            available_cats = result.get("available_categories", [])
+            return (f"Error: {error}\n"
+                   f"Available browser categories: {', '.join(available_cats)}")
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        error_msg = str(e)
+        if "Browser is not available" in error_msg:
+            logger.error(f"Browser is not available in Ableton: {error_msg}")
+            return f"Error: The Ableton browser is not available. Make sure Ableton Live is fully loaded and try again."
+        elif "Could not access Live application" in error_msg:
+            logger.error(f"Could not access Live application: {error_msg}")
+            return f"Error: Could not access the Ableton Live application. Make sure Ableton Live is running and the Remote Script is loaded."
+        elif "Unknown or unavailable category" in error_msg:
+            logger.error(f"Invalid browser category: {error_msg}")
+            return f"Error: {error_msg}. Please check the available categories using get_browser_tree."
+        else:
+            logger.error(f"Error searching browser items: {error_msg}")
+            return f"Error searching browser items: {error_msg}"
+
+@mcp.tool()
 @rich_telemetry_tool("load_drum_kit")
 def load_drum_kit(ctx: Context, track_index: int, rack_uri: str, kit_path: str, user_prompt: str = "") -> str:
     """
@@ -861,6 +929,47 @@ def set_arrangement_time(ctx: Context, time: float, user_prompt: str = "") -> st
     except Exception as e:
         logger.error(f"Error setting arrangement time: {str(e)}")
         return f"Error setting arrangement time: {str(e)}"
+
+
+@mcp.tool()
+@rich_telemetry_tool("set_loop_region")
+def set_loop_region(ctx: Context, start: float, length: float, user_prompt: str = "") -> str:
+    """
+    Set the arrangement loop region.
+
+    Parameters:
+    - start: Loop start position in beats from the start of the arrangement
+    - length: Loop length in beats (must be > 0)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_loop_region", {"start": start, "length": length})
+        return (f"Loop region set to start={result.get('loop_start', start)}, "
+                f"length={result.get('loop_length', length)}")
+    except Exception as e:
+        logger.error(f"Error setting loop region: {str(e)}")
+        return f"Error setting loop region: {str(e)}"
+
+
+@mcp.tool()
+@rich_telemetry_tool("enable_arrangement_loop")
+def enable_arrangement_loop(ctx: Context, enabled: bool = True, user_prompt: str = "") -> str:
+    """
+    Enable or disable the arrangement loop.
+
+    Parameters:
+    - enabled: True to enable looping, False to disable it (default: True)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("enable_arrangement_loop", {"enabled": enabled})
+        state = "enabled" if result.get("loop", enabled) else "disabled"
+        return f"Arrangement loop {state}"
+    except Exception as e:
+        logger.error(f"Error setting arrangement loop: {str(e)}")
+        return f"Error setting arrangement loop: {str(e)}"
 
 
 @mcp.tool()
@@ -1774,9 +1883,9 @@ def scaffold_track(
             "main_section": {"name": main_section["name"], "start_bar": main_start_bar, "bars": main_bars},
             "tracks_to_create": [e for e in chosen_elements if e in ("drums", "bass", "chords", "pad", "fx")],
             "note": (
-                "Track grouping, instrument loading, and arrangement looping are not "
-                "automated yet — group the tracks, load instruments on Bass/Harmony/Pad, "
-                "and set the loop range by hand in Live."
+                "Track grouping and instrument loading are not automated yet — group "
+                "the tracks and load instruments on Bass/Harmony/Pad by hand in Live "
+                "(use set_loop_region/enable_arrangement_loop to set up looped playback)."
             ),
         }
 
