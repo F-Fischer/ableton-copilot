@@ -7,7 +7,7 @@ This document captures suggested next steps for improving Ableton Copilot from a
 | Step | Area | Status |
 | --- | --- | --- |
 | 1 | Add MCP prompts and resources | Done |
-| 2 | Add high-value tools | Pending |
+| 2 | Add high-value tools | In progress |
 | 3 | Improve composition generators | Pending |
 | 4 | Improve sound design | Pending |
 | 5 | Improve reliability and architecture | In progress |
@@ -70,13 +70,13 @@ Implemented resources:
 
 ## 3. Add High-Value Tools
 
-Status: Pending
+Status: In progress
 
 Prioritize tools that unlock common production workflows and reduce manual Ableton work.
 
 Track and clip tools:
 
-- `create_audio_track`
+- `create_audio_track` — Done
 - `duplicate_track`
 - `duplicate_clip`
 - `clear_clip_notes`
@@ -87,8 +87,8 @@ Track and clip tools:
 
 Arrangement tools:
 
-- `set_loop_region`
-- `enable_arrangement_loop`
+- `set_loop_region` — Done
+- `enable_arrangement_loop` — Done
 - `duplicate_arrangement_region`
 - `delete_arrangement_clip`
 - `move_arrangement_clip`
@@ -103,7 +103,7 @@ Session View tools:
 
 Browser and device tools:
 
-- `search_browser_items`
+- `search_browser_items` — Done
 - `load_best_instrument`
 - `load_best_effect`
 - `load_best_drum_kit`

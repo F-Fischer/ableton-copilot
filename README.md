@@ -122,9 +122,11 @@ Once the config file has been set on Claude, and the remote script is running in
 - Generate key- and genre-aware chord progressions, basslines, and drum patterns
 - Scaffold an entire section (key, chords, bass, drums) in one call
 - Create full song arrangements from start to finish in Arrangement View
+- Set and enable/disable the arrangement loop region
 - Create, edit, and trigger clips
 - Control playback
 - Load instruments and effects from Ableton's browser
+- Search the browser by name across all categories
 - Add notes to MIDI clips
 - Change tempo and other session parameters
 
