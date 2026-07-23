@@ -1,197 +1,23 @@
 # ableton_copilot_server.py
 from mcp.server.fastmcp import FastMCP, Context
-import socket
 import json
 import logging
-import os
 import random
-from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List, Union, Optional
 
+from .connection import disconnect_ableton_connection, get_ableton_connection
+from .prompts import register_prompts
+from .resources import register_resources
+from .state import PROJECT, project_key_payload, save_project_state
 from .telemetry import record_startup
 from .telemetry_decorator import telemetry_tool, rich_telemetry_tool
 from . import music_theory
-
-ABLETON_HOST = os.environ.get("ABLETON_HOST", "localhost")
-ABLETON_PORT = int(os.environ.get("ABLETON_PORT", "9877"))
-
-PROJECT_STATE_PATH = os.path.join(os.path.dirname(__file__), "project_key.json")
-
-
-def _load_project_state() -> Dict[str, Any]:
-    try:
-        with open(PROJECT_STATE_PATH, "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, ValueError):
-        return {"tonic": None, "mode": None, "tempo": None, "genre": None}
-
-
-def _save_project_state(state: Dict[str, Any]) -> None:
-    with open(PROJECT_STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2)
-
-
-PROJECT = _load_project_state()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("AbletonMCPServer")
-
-@dataclass
-class AbletonConnection:
-    host: str
-    port: int
-    sock: socket.socket = None
-    
-    def connect(self) -> bool:
-        """Connect to the Ableton Remote Script socket server"""
-        if self.sock:
-            return True
-
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.settimeout(5.0)
-            self.sock.connect((self.host, self.port))
-            self.sock.settimeout(None)
-            logger.info(f"Connected to Ableton at {self.host}:{self.port}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to Ableton at {self.host}:{self.port}: {str(e)}")
-            self.sock = None
-            return False
-    
-    def disconnect(self):
-        """Disconnect from the Ableton Remote Script"""
-        if self.sock:
-            try:
-                self.sock.close()
-            except Exception as e:
-                logger.error(f"Error disconnecting from Ableton: {str(e)}")
-            finally:
-                self.sock = None
-
-    def receive_full_response(self, sock, buffer_size=8192):
-        """Receive the complete response, potentially in multiple chunks"""
-        chunks = []
-        sock.settimeout(15.0)  # Increased timeout for operations that might take longer
-        
-        try:
-            while True:
-                try:
-                    chunk = sock.recv(buffer_size)
-                    if not chunk:
-                        if not chunks:
-                            raise Exception("Connection closed before receiving any data")
-                        break
-                    
-                    chunks.append(chunk)
-                    
-                    # Check if we've received a complete JSON object
-                    try:
-                        data = b''.join(chunks)
-                        json.loads(data.decode('utf-8'))
-                        logger.info(f"Received complete response ({len(data)} bytes)")
-                        return data
-                    except json.JSONDecodeError:
-                        # Incomplete JSON, continue receiving
-                        continue
-                except socket.timeout:
-                    logger.warning("Socket timeout during chunked receive")
-                    break
-                except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-                    logger.error(f"Socket connection error during receive: {str(e)}")
-                    raise
-        except Exception as e:
-            logger.error(f"Error during receive: {str(e)}")
-            raise
-            
-        # If we get here, we either timed out or broke out of the loop
-        if chunks:
-            data = b''.join(chunks)
-            logger.info(f"Returning data after receive completion ({len(data)} bytes)")
-            try:
-                json.loads(data.decode('utf-8'))
-                return data
-            except json.JSONDecodeError:
-                raise Exception("Incomplete JSON response received")
-        else:
-            raise Exception("No data received")
-
-    def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Send a command to Ableton and return the response"""
-        if not self.sock and not self.connect():
-            raise ConnectionError("Not connected to Ableton")
-        
-        command = {
-            "type": command_type,
-            "params": params or {}
-        }
-        
-        # Check if this is a state-modifying command
-        is_modifying_command = command_type in [
-            "create_midi_track", "create_audio_track", "set_track_name",
-            "create_clip", "create_audio_clip", "add_notes_to_clip", "set_clip_name",
-            "set_tempo", "fire_clip", "stop_clip", "set_device_parameter", "set_multiple_device_parameters",
-            "delete_track", "delete_clip", "delete_device",
-            "start_playback", "stop_playback", "load_instrument_or_effect",
-            # Arrangement view commands
-            "switch_to_arrangement_view", "set_current_song_time",
-            "duplicate_session_clip_to_arrangement"
-        ]
-
-        # Commands whose work on Live's main thread can take noticeably longer
-        # than the default modifying-command budget (e.g. importing/decoding a
-        # large audio file). Give them a wider socket timeout so we don't time
-        # out before the Remote Script's own queue does.
-        long_running_commands = {"create_audio_clip": 65.0}
-        
-        try:
-            logger.info(f"Sending command: {command_type} with params: {params}")
-            
-            # Send the command
-            self.sock.sendall(json.dumps(command).encode('utf-8'))
-            logger.info(f"Command sent, waiting for response...")
-            
-            # Set timeout based on command type
-            if command_type in long_running_commands:
-                timeout = long_running_commands[command_type]
-            else:
-                timeout = 15.0 if is_modifying_command else 10.0
-            self.sock.settimeout(timeout)
-
-            # Receive the response
-            response_data = self.receive_full_response(self.sock)
-            logger.info(f"Received {len(response_data)} bytes of data")
-
-            # Parse the response
-            response = json.loads(response_data.decode('utf-8'))
-            logger.info(f"Response parsed, status: {response.get('status', 'unknown')}")
-
-            if response.get("status") == "error":
-                logger.error(f"Ableton error: {response.get('message')}")
-                raise Exception(response.get("message", "Unknown error from Ableton"))
-            
-            return response.get("result", {})
-        except socket.timeout:
-            logger.error("Socket timeout while waiting for response from Ableton")
-            self.sock = None
-            raise Exception("Timeout waiting for Ableton response")
-        except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-            logger.error(f"Socket connection error: {str(e)}")
-            self.sock = None
-            raise Exception(f"Connection to Ableton lost: {str(e)}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON response from Ableton: {str(e)}")
-            if 'response_data' in locals() and response_data:
-                logger.error(f"Raw response (first 200 bytes): {response_data[:200]}")
-            self.sock = None
-            raise Exception(f"Invalid response from Ableton: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error communicating with Ableton: {str(e)}")
-            self.sock = None
-            raise Exception(f"Communication error with Ableton: {str(e)}")
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
@@ -214,11 +40,8 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 
         yield {}
     finally:
-        global _ableton_connection
-        if _ableton_connection:
-            logger.info("Disconnecting from Ableton on shutdown")
-            _ableton_connection.disconnect()
-            _ableton_connection = None
+        logger.info("Disconnecting from Ableton on shutdown")
+        disconnect_ableton_connection()
         logger.info("AbletonMCP server shut down")
 
 # Create the MCP server with lifespan support
@@ -227,322 +50,8 @@ mcp = FastMCP(
     lifespan=server_lifespan
 )
 
-# Global connection for resources
-_ableton_connection = None
-
-def get_ableton_connection():
-    """Get or create a persistent Ableton connection"""
-    global _ableton_connection
-
-    if _ableton_connection is not None and _ableton_connection.sock is not None:
-        try:
-            # Check if the socket is still alive by peeking for data
-            # MSG_PEEK + MSG_DONTWAIT will raise BlockingIOError if alive but no data,
-            # or return b'' if the remote end has closed the connection.
-            _ableton_connection.sock.setblocking(False)
-            try:
-                data = _ableton_connection.sock.recv(1, socket.MSG_PEEK)
-                if data == b'':
-                    raise ConnectionError("Remote end closed")
-            except BlockingIOError:
-                pass  # Socket is alive, just no data waiting — this is normal
-            finally:
-                _ableton_connection.sock.setblocking(True)
-            return _ableton_connection
-        except Exception as e:
-            logger.warning(f"Existing connection is no longer valid: {str(e)}")
-            try:
-                _ableton_connection.disconnect()
-            except:
-                pass
-            _ableton_connection = None
-    
-    # Connection doesn't exist or is invalid, create a new one
-    if _ableton_connection is None:
-        max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
-            try:
-                logger.info(f"Connecting to Ableton at {ABLETON_HOST}:{ABLETON_PORT} (attempt {attempt}/{max_attempts})...")
-                _ableton_connection = AbletonConnection(host=ABLETON_HOST, port=ABLETON_PORT)
-                if _ableton_connection.connect():
-                    logger.info("Created new persistent connection to Ableton")
-                    return _ableton_connection
-                else:
-                    _ableton_connection = None
-            except Exception as e:
-                logger.error(f"Connection attempt {attempt} failed: {str(e)}")
-                if _ableton_connection:
-                    _ableton_connection.disconnect()
-                    _ableton_connection = None
-
-            if attempt < max_attempts:
-                import time
-                time.sleep(1.0)
-        
-        # If we get here, all connection attempts failed
-        if _ableton_connection is None:
-            logger.error("Failed to connect to Ableton after multiple attempts")
-            raise Exception("Could not connect to Ableton. Make sure the Remote Script is running.")
-    
-    return _ableton_connection
-
-
-def _json_resource(payload: Dict[str, Any]) -> str:
-    """Return a stable JSON string for MCP resources."""
-    return json.dumps(payload, indent=2, sort_keys=True)
-
-
-def _resource_error(message: str) -> str:
-    return _json_resource({"status": "error", "message": message})
-
-
-def _project_key_payload() -> Dict[str, Any]:
-    result = dict(PROJECT)
-    if PROJECT.get("tonic") and PROJECT.get("mode"):
-        result["scale_pitch_classes"] = sorted(
-            music_theory.scale_pitch_classes(PROJECT["tonic"], PROJECT["mode"])
-        )
-    return result
-
-
-def _genre_payload() -> Dict[str, Any]:
-    return {
-        "genres": music_theory.GENRES,
-        "modes": sorted(music_theory.SCALES.keys()),
-        "tonics": sorted(music_theory.NOTE_NAMES.keys()),
-        "default_progressions": music_theory.DEFAULT_PROGRESSIONS,
-        "default_structure": music_theory.DEFAULT_STRUCTURE,
-        "drum_pitches": music_theory.DRUM_PITCHES,
-        "sound_presets": {
-            name: {"device": preset.get("device"), "parameters": sorted(preset.get("params", {}).keys())}
-            for name, preset in music_theory.SOUND_PRESETS.items()
-        },
-    }
-
-
-def _browser_favorites_payload() -> Dict[str, Any]:
-    favorites = []
-    for genre, definition in music_theory.GENRES.items():
-        for role in ("chord_instrument", "bass_instrument", "drum_rack", "pad_instrument"):
-            uri = definition.get(role)
-            if uri:
-                favorites.append({"genre": genre, "role": role, "uri": uri})
-
-    return {
-        "favorites": favorites,
-        "notes": [
-            "Use get_browser_tree and get_browser_items_at_path to discover more browser URIs.",
-            "Use load_instrument_or_effect once a specific URI is known.",
-            "This resource is intentionally curated and may be empty until more known-good URIs are added.",
-        ],
-    }
-
-
-TOOL_GUIDE = """# Ableton Copilot Tool Guide
-
-Recommended workflow:
-1. Start with get_session_info and get_project_key.
-2. For composition, call set_project_key before generators.
-3. Use scaffold_track for a first arrangement pass, then inspect tracks/clips.
-4. Use browser tools to discover and load instruments or effects by URI.
-5. Use get_device_parameters before setting device parameters.
-6. Prefer Arrangement View tools for full songs and Session View tools for loop sketching.
-
-Read-only tools/resources should be used before mutating tools when the current set is unknown.
-Destructive tools include delete_track, delete_clip, and delete_device.
-"""
-
-
-@mcp.resource(
-    "ableton://session/current",
-    name="Current Ableton Session",
-    description="Read-only snapshot of the current Ableton Live session.",
-    mime_type="application/json",
-)
-def current_session_resource() -> str:
-    try:
-        ableton = get_ableton_connection()
-        return _json_resource({"status": "ok", "session": ableton.send_command("get_session_info")})
-    except Exception as e:
-        logger.error(f"Error reading current session resource: {str(e)}")
-        return _resource_error(f"Could not read Ableton session: {str(e)}")
-
-
-@mcp.resource(
-    "ableton://project/key",
-    name="Project Key",
-    description="Saved key, mode, tempo, genre, and scale pitch classes.",
-    mime_type="application/json",
-)
-def project_key_resource() -> str:
-    try:
-        return _json_resource({"status": "ok", "project": _project_key_payload()})
-    except Exception as e:
-        logger.error(f"Error reading project key resource: {str(e)}")
-        return _resource_error(f"Could not read project key: {str(e)}")
-
-
-@mcp.resource(
-    "ableton://genres",
-    name="Supported Genres",
-    description="Supported genres, modes, drum mappings, default progressions, and sound presets.",
-    mime_type="application/json",
-)
-def genres_resource() -> str:
-    return _json_resource({"status": "ok", **_genre_payload()})
-
-
-@mcp.resource(
-    "ableton://browser/favorites",
-    name="Browser Favorites",
-    description="Curated browser URI hints for known-good instruments, racks, and effects.",
-    mime_type="application/json",
-)
-def browser_favorites_resource() -> str:
-    return _json_resource({"status": "ok", **_browser_favorites_payload()})
-
-
-@mcp.resource(
-    "ableton://tool-guide",
-    name="Tool Guide",
-    description="Workflow guidance for choosing Ableton Copilot tools safely.",
-    mime_type="text/markdown",
-)
-def tool_guide_resource() -> str:
-    return TOOL_GUIDE
-
-
-@mcp.prompt(
-    name="compose_track",
-    description="Create a new Ableton arrangement from genre, mood, key, and length.",
-)
-def compose_track_prompt(
-    genre: str,
-    key: str = "",
-    mood: str = "",
-    length: str = "short",
-) -> str:
-    return f"""
-Create a {length} Ableton arrangement in the style of {genre}.
-Mood: {mood or "choose an appropriate mood"}
-Preferred key: {key or "choose an appropriate key and mode"}
-
-Workflow:
-1. Read ableton://genres and ableton://project/key.
-2. Call get_session_info to inspect the current set.
-3. Call set_project_key with genre, tonic, mode, and tempo.
-4. Call scaffold_track to create markers and core tracks.
-5. Use browser tools to find and load suitable instruments/effects.
-6. Generate or refine drums, bass, chords, pad, and fx parts.
-7. Switch to Arrangement View.
-8. Return a concise summary of tracks, sections, key, tempo, and manual follow-ups.
-"""
-
-
-@mcp.prompt(
-    name="arrange_existing_loop",
-    description="Turn existing Session View material into a structured Arrangement View song.",
-)
-def arrange_existing_loop_prompt(
-    target_structure: str = "intro, build, drop, breakdown, outro",
-    length_bars: int = 64,
-) -> str:
-    return f"""
-Arrange the existing Ableton material into a {length_bars}-bar song structure:
-{target_structure}
-
-Workflow:
-1. Call get_session_info and inspect relevant tracks with get_track_info.
-2. Read MIDI clips with get_clip_notes where variation is needed.
-3. Create section markers with create_section_markers.
-4. Duplicate useful Session clips into Arrangement View with duplicate_to_arrangement.
-5. Vary density by section using clip placement, muting, and generated fills.
-6. Switch to Arrangement View and summarize the arrangement.
-"""
-
-
-@mcp.prompt(
-    name="mix_session",
-    description="Create a rough static mix for the current Ableton session.",
-)
-def mix_session_prompt(style: str = "balanced", headroom: str = "leave conservative headroom") -> str:
-    return f"""
-Create a {style} rough mix for the current Ableton session and {headroom}.
-
-Workflow:
-1. Call get_session_info and inspect all important tracks with get_track_info.
-2. Identify drums, bass, harmony, lead, pad, fx, return, and master roles from names/devices.
-3. Set initial volume with set_track_volume.
-4. Set pan positions with set_track_pan where appropriate.
-5. Configure sends with set_send_level when return tracks exist.
-6. Avoid destructive edits unless explicitly requested.
-7. Return a concise mix log with track changes and any assumptions.
-"""
-
-
-@mcp.prompt(
-    name="sound_design_patch",
-    description="Design or refine a synth/effect patch from a text description.",
-)
-def sound_design_patch_prompt(
-    sound: str,
-    track_index: int,
-    device_index: int = 0,
-) -> str:
-    return f"""
-Design this sound on track {track_index}, device {device_index}: {sound}
-
-Workflow:
-1. Call get_track_info for track {track_index}.
-2. Call get_device_parameters for device {device_index}, using name_filter if the parameter list is large.
-3. If a matching preset exists, call apply_sound_design_preset.
-4. Use set_device_parameter or set_multiple_device_parameters for targeted tweaks.
-5. Keep values inside the parameter ranges returned by get_device_parameters.
-6. Return a concise patch summary and any skipped parameters.
-"""
-
-
-@mcp.prompt(
-    name="remix_clip",
-    description="Create a musical variation of an existing MIDI clip.",
-)
-def remix_clip_prompt(
-    track_index: int,
-    clip_index: int,
-    variation: str = "make a complementary variation",
-    destination_clip_index: int = -1,
-) -> str:
-    return f"""
-Create a variation of the MIDI clip at track {track_index}, slot {clip_index}.
-Variation request: {variation}
-Destination clip slot: {destination_clip_index if destination_clip_index >= 0 else "choose an empty slot"}
-
-Workflow:
-1. Call get_project_key and get_clip_notes.
-2. Preserve the original clip unless the user explicitly asked to overwrite it.
-3. Create a destination clip with create_clip.
-4. Transform the notes according to the variation request.
-5. Use add_notes_to_clip, with snap_to_scale if a project key is available.
-6. Name the new clip with set_clip_name and summarize the changes.
-"""
-
-
-@mcp.prompt(
-    name="debug_ableton_connection",
-    description="Diagnose MCP server and Ableton Remote Script connection problems.",
-)
-def debug_ableton_connection_prompt() -> str:
-    return """
-Diagnose the Ableton Copilot connection.
-
-Workflow:
-1. Try get_session_info and report the exact error if it fails.
-2. Confirm Ableton Live is open and the AbletonMCP Remote Script is selected as a Control Surface.
-3. Confirm only one MCP server instance is running.
-4. Confirm the server is using ABLETON_HOST/ABLETON_PORT, defaulting to localhost:9877.
-5. If the connection times out, suggest restarting Ableton Live and the MCP client.
-6. If Live version support is relevant, mention that create_audio_clip requires Live 12.0.5 or newer.
-"""
+register_resources(mcp)
+register_prompts(mcp)
 
 
 # Core Tool endpoints
@@ -811,7 +320,7 @@ def set_project_key(
             PROJECT["tempo"] = tempo
         if genre is not None:
             PROJECT["genre"] = genre
-        _save_project_state(PROJECT)
+        save_project_state(PROJECT)
 
         if tempo is not None:
             ableton = get_ableton_connection()
@@ -835,12 +344,7 @@ def get_project_key(ctx: Context, user_prompt: str = "") -> str:
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:
-        result = dict(PROJECT)
-        if PROJECT.get("tonic") and PROJECT.get("mode"):
-            result["scale_pitch_classes"] = sorted(
-                music_theory.scale_pitch_classes(PROJECT["tonic"], PROJECT["mode"])
-            )
-        return json.dumps(result, indent=2)
+        return json.dumps(project_key_payload(), indent=2)
     except Exception as e:
         logger.error(f"Error getting project key: {str(e)}")
         return f"Error getting project key: {str(e)}"

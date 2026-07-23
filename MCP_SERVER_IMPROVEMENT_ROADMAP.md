@@ -10,7 +10,7 @@ This document captures suggested next steps for improving Ableton Copilot from a
 | 2 | Add high-value tools | Pending |
 | 3 | Improve composition generators | Pending |
 | 4 | Improve sound design | Pending |
-| 5 | Improve reliability and architecture | Pending |
+| 5 | Improve reliability and architecture | In progress |
 | 6 | Improve documentation | Pending |
 
 ## 1. Add MCP Prompts
@@ -158,9 +158,17 @@ Recommended improvements:
 
 ## 6. Improve Reliability and Architecture
 
-Status: Pending
+Status: In progress
 
 These changes make the server easier to maintain and less fragile under real sessions.
+
+Completed:
+
+- Extracted MCP prompts into `MCP_Server/prompts.py`.
+- Extracted MCP resources into `MCP_Server/resources.py`.
+- Extracted Ableton socket connection management into `MCP_Server/connection.py`.
+- Extracted persisted project key state into `MCP_Server/state.py`.
+- Kept tool implementations in `MCP_Server/server.py` as the next refactor boundary.
 
 Recommended engineering work:
 
